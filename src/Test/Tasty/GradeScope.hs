@@ -191,6 +191,9 @@ instance Monoid ScoreSummary where
   (ScoreSummary ts1 tot1 f1) `mappend` (ScoreSummary ts2 tot2 f2) =
     ScoreSummary (ts1<>ts2) (tot1<>tot2) (f1<>f2)
 
+instance Semigroup ScoreSummary where
+  (ScoreSummary ts1 tot1 f1) <> (ScoreSummary ts2 tot2 f2) = ScoreSummary (ts1 <> ts2) (tot1 <> tot2) (f1 <> f2)
+
 type ScoreTraversal = Traversal (Compose (State.StateT Int IO) (Const ScoreSummary))
 
 foldScores :: StatusMap -> TreeFold ScoreTraversal

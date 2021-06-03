@@ -147,8 +147,9 @@ data TestResult = TestResult
   { resultId       :: Int
   , resultName     :: TestName
   , resultWeight   :: Int
-  , resultMetadata :: Result
   , resultVisible  :: Visibility
+  , resultOutput   :: String
+  , resultSuccessful :: Bool
   }
 
 instance JSON TestResult where
@@ -158,15 +159,12 @@ instance JSON TestResult where
       [ ("name"       , showJSON resultName)
       , ("score"      , showJSON score)
       , ("max_score"  , showJSON resultWeight)
-      , ("output"     , showJSON (Runners.resultDescription resultMetadata))
+      , ("output"     , showJSON resultOutput)
       , ("visibility" , showJSON resultVisible)
       ]
     where
-      score | resultSuccessful tr = resultWeight
+      score | resultSuccessful = resultWeight
             | otherwise = 0
-
-resultSuccessful :: TestResult -> Bool
-resultSuccessful = Runners.resultSuccessful . resultMetadata
 
 instance JSON Visibility where
   readJSON = undefined
@@ -208,12 +206,19 @@ scoreSingleTest statusMap options resultName _ = Traversal $ Compose $ do
   let Weight resultWeight = lookupOption options
       resultVisible = lookupOption options :: Visibility
       NegScoring ns = lookupOption options
-  testResult <- State.lift $ do
-    resultMetadata <- atomically . waitFinished $ statusMap IntMap.! resultId
-    return TestResult{..}
-  let
-    failed = not (resultSuccessful testResult)
-    summary = ScoreSummary [testResult] (scoreQ resultWeight failed ns) (countFail failed)
+  resultMetadata <- State.lift $ atomically $ do
+    status <- readTVar $
+      fromMaybe (error "Attempted to lookup test by index outside bounds") $
+      IntMap.lookup resultId statusMap
+    case status of 
+      Done testMetadata -> return testMetadata
+      _ -> retry
+  resultOutput <- State.liftIO . Runners.formatMessage . Runners.resultDescription $ resultMetadata
+  
+  let resultSuccessful = Runners.resultSuccessful resultMetadata
+      testResult = TestResult{..}
+      failed = not resultSuccessful
+      summary = ScoreSummary [testResult] (scoreQ resultWeight failed ns) (countFail failed)
   Const summary <$ State.modify (+1)
   where
       -- negative scoring, fail
@@ -224,12 +229,6 @@ scoreSingleTest statusMap options resultName _ = Traversal $ Compose $ do
 
     countFail True = Sum 1
     countFail False = Sum 0
-
-waitFinished :: TVar Status -> STM Result
-waitFinished = readTVar >=> \st ->
-  case st of
-    Done x -> pure x
-    _      -> retry
 
 scoreGroup :: TestName -> ScoreTraversal -> ScoreTraversal
 scoreGroup group kids = kids
